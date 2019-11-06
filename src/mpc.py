@@ -18,7 +18,6 @@ class MPC:
                  use_mpc=True,
                  use_random_optimizer=False):
         """
-
         :param env:
         :param plan_horizon:
         :param model: The learned dynamics model to use, which can be None if
@@ -33,10 +32,16 @@ class MPC:
             trajectory
         :param use_random_optimizer: Whether to use CEM or take random actions
         """
+
         self.env = env
-        self.use_gt_dynamics, self.use_mpc, self.use_random_optimizer = use_gt_dynamics, use_mpc, use_random_optimizer
-        self.num_particles = num_particles
+        self.use_gt_dynamics = use_gt_dynamics
+        self.use_mpc = use_mpc
+        self.use_random_optimizer = use_random_optimizer
         self.plan_horizon = plan_horizon
+        self.popsize = popsize
+        self.num_elites = num_elites
+        self.max_iters = max_iters
+        self.num_particles = num_particles
         self.num_nets = None if model is None else model.num_nets
 
         self.state_dim, self.action_dim = 8, env.action_space.shape[0]
@@ -51,10 +56,12 @@ class MPC:
         else:
             self.predict_next_state = self.predict_next_state_model
 
-        # TODO: write your code here
         # Initialize your planner with the relevant arguments.
         # Write different optimizers for cem and random actions respectively
-        raise NotImplementedError
+        if self.use_random_optimizer:
+            raise NotImplementedError
+        else:
+            self.opt = self.cem_optimizer
 
     def obs_cost_fn(self, state):
         """ Cost function of the current state """
@@ -76,19 +83,59 @@ class MPC:
         return W_PUSHER * np.max(d_box - 0.4, 0) + W_GOAL * d_goal + W_DIFF * diff_coord
 
     def predict_next_state_model(self, states, actions):
-        """ Given a list of state action pairs, use the learned model to predict the next state"""
+        """ Given a list of state action pairs, use the learned model to
+        predict the next state
+        """
         # TODO: write your code here
         raise NotImplementedError
 
     def predict_next_state_gt(self, states, actions):
-        """ Given a list of state action pairs, use the ground truth dynamics to predict the next state"""
-        # TODO: write your code here
-        raise NotImplementedError
+        """ Given a list of state action pairs, use the ground truth dynamics
+        to predict the next state
+
+        Returns:
+            n_s_t (list): States predicted from the ground truth
+            dynamics. (TODO: Verify whether this should be a list)
+        """
+        n_s_t = [self.env.get_nxt_state(s, a) for s, a in zip(states, actions)]
+        return n_s_t
+
+    def cem_optimizer(self, mu, sigma):
+        # TODO: Generate M action sequences of length T according to
+        # N(mu, sigma). Verify your method.
+        actions = np.random.normal(mu, sigma, size=(self.popsize,
+                                                    self.plan_horizon))
+        for i in range(self.max_iters):
+            q = {}
+            for m in range(self.popsize):
+                cost = 0
+                # TODO: yet to implement for learned model
+                if not self.use_gt_dynamics:
+                    raise NotImplementedError
+                new_state = self.env.reset()
+                cost += self.obs_cost_fn(new_state)
+                for a in range(self.plan_horizon):
+                    state = new_state
+                    action = actions[m, a]
+                    new_state, _, _, _ = self.predict_next_state(state, action)
+                    cost += self.obs_cost_fn(new_state)
+                q[cost] = m
+            # Caclulate mean and std using the elite action sequences
+            q = sorted(q.items(), key=lambda x: x[0])
+            q = q[:self.num_elites]
+            elite_actions = actions[[x[1] for x in q]]
+            # TODO: Verify your method.
+            mu = np.mean(elite_actions)
+            sigma = np.std(elite_actions)
+
+        return mu
 
     def train(self, obs_trajs, acs_trajs, rews_trajs, epochs=5):
         """
-        Take the input obs, acs, rews and append to existing transitions the train model.
-        Arguments:
+        Take the input obs, acs, rews and append to existing transitions the
+        train model.
+
+        Args:
           obs_trajs: states
           acs_trajs: actions
           rews_trajs: rewards (NOTE: this may not be used)
