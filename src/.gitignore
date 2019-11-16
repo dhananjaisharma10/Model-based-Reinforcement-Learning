@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# MacOS files
+.DS_Store
+
+# Sub-directories
+her/
+
+# PDF files
+*.pdf
+
+# Tex files
+*.tex
+
+# VSCODE files
+.vscode/
+
+# Project files
+/*.project
+/*.pydevproject
+/.settings
