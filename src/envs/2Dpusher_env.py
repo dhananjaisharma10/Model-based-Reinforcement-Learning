@@ -160,7 +160,6 @@ class Pusher2d(gym.Env):
     def get_nxt_state(self, state, action):
         original_state = self.get_state()
         original_elapsed_steps = self.elapsed_steps
-
         self.set_state(state)
         nxt_state, _, _, _ = self.step(action)
         nxt_state = nxt_state[:8]
