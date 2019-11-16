@@ -10,7 +10,7 @@ class Agent:
         Sample a rollout from the agent.
 
         Arguments:
-          horizon: (int) the length of the rollout
+          horizon (int): the length of the rollout
           policy: the policy that the agent will use for actions
         """
         rewards = []
