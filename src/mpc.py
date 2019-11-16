@@ -3,6 +3,7 @@ import tensorflow as tf
 import numpy as np
 import gym
 import copy
+from time import time
 
 
 class MPC:
@@ -14,8 +15,8 @@ class MPC:
                  num_elites,
                  max_iters,
                  num_particles=6,
-                 use_gt_dynamics=True,
                  use_mpc=True,
+                 use_gt_dynamics=True,
                  use_random_optimizer=False):
         """
         :param env:
@@ -34,19 +35,23 @@ class MPC:
         """
 
         self.env = env
-        self.use_gt_dynamics = use_gt_dynamics
-        self.use_mpc = use_mpc
-        self.use_random_optimizer = use_random_optimizer
-        self.plan_horizon = plan_horizon
+
         self.popsize = popsize
-        self.num_elites = num_elites
         self.max_iters = max_iters
+        self.num_elites = num_elites
+        self.plan_horizon = plan_horizon
         self.num_particles = num_particles
+
+        self.use_mpc = use_mpc
+        self.use_gt_dynamics = use_gt_dynamics
+        self.use_random_optimizer = use_random_optimizer
+
         self.num_nets = None if model is None else model.num_nets
 
         self.state_dim, self.action_dim = 8, env.action_space.shape[0]
         self.ac_ub, self.ac_lb = env.action_space.high, env.action_space.low
 
+        self.goal = self.env.goal_pos
         # Set up optimizer
         self.model = model
 
@@ -59,7 +64,7 @@ class MPC:
         # Initialize your planner with the relevant arguments.
         # Write different optimizers for cem and random actions respectively
         if self.use_random_optimizer:
-            raise NotImplementedError
+            self.opt = self.random_optimizer
         else:
             self.opt = self.cem_optimizer
 
@@ -83,51 +88,87 @@ class MPC:
         return W_PUSHER * np.max(d_box - 0.4, 0) + W_GOAL * d_goal + W_DIFF * diff_coord
 
     def predict_next_state_model(self, states, actions):
-        """ Given a list of state action pairs, use the learned model to
-        predict the next state
+        """Given a list of state action pairs, use the learned model to
+        predict the next state.
         """
-        # TODO: write your code here
-        raise NotImplementedError
+        # num_particles = states.shape[0]
+        for i in range(self.plan_horizon):
+            idx = i * self.action_dim
+            action = actions[idx:idx + self.action_dim]
+            next_state = self.model.predict(states[i], action)
+            states.append(next_state)
+        return states
 
     def predict_next_state_gt(self, states, actions):
-        """ Given a list of state action pairs, use the ground truth dynamics
-        to predict the next state
-
-        Returns:
-            n_s_t (list): States predicted from the ground truth
-            dynamics. (TODO: Verify whether this should be a list)
+        """Given a list of state action pairs, use the ground truth dynamics
+        to predict the next state.
         """
-        n_s_t = [self.env.get_nxt_state(s, a) for s, a in zip(states, actions)]
-        return n_s_t
+        for i in range(self.plan_horizon):
+            idx = i * self.action_dim
+            action = actions[idx:idx + self.action_dim]
+            next_state = self.env.get_nxt_state(states[i], action)
+            states.append(next_state)
+        return states
 
-    def cem_optimizer(self, mu, sigma):
-        # TODO: Generate M action sequences of length T according to
-        # N(mu, sigma). Verify your method.
-        actions = np.random.normal(mu, sigma, size=(self.popsize,
-                                                    self.plan_horizon))
+    def random_optimizer(self, state):
+        """Implements the random optimizer. It gives the best action sequence
+        for a certain initial state.
+        Piazza #699
+        """
+        best_cost = np.inf
+        best_action_sequence = np.zeros_like(self.mu)
+        # Generate M*I action sequences of length T according to N(0, 0.5I)
+        total_sequences = self.popsize * self.max_iters
+        shape = (total_sequences, self.plan_horizon * self.action_dim)
+        self.reset()  # resets mu and sigma
+        actions = np.random.normal(self.mu, self.sigma, size=shape)
+        for i in range(total_sequences):
+            cost = 0
+            for _ in range(self.num_particles):
+                start = time()
+                if not self.use_gt_dynamics:
+                    states = np.tile(state, reps=(self.num_particles, 1))
+                    states = self.predict_next_state(states, actions[i, :])
+                else:
+                    states = self.predict_next_state([state], actions[i, :])
+                print('Time taken for a particle: {:.3f}'.format(time() - start))
+                assert len(states) == self.plan_horizon + 1
+                cost += sum(self.obs_cost_fn(x) for x in states)
+            cost /= self.num_particles
+            if cost < best_cost:
+                best_cost = cost
+                best_action_sequence = actions[i, :]
+        return best_action_sequence
+
+    def cem_optimizer(self, state):
+        """Implements the Cross Entropy Method optimizer. It gives the action
+        sequence for a certain initial state by choosing elite sequences and
+        using their mean.
+        """
+        state = state[:self.state_dim]
+        mu = self.mu
+        sigma = self.sigma
         for i in range(self.max_iters):
-            q = {}
+            # Generate M action sequences of length T according to N(mu, std)
+            shape = (self.popsize, self.plan_horizon * self.action_dim)
+            actions = np.random.normal(mu, sigma, size=shape)
+            actions = np.clip(actions, a_min=-1, a_max=1)
+            costs = list()
             for m in range(self.popsize):
                 cost = 0
-                # TODO: yet to implement for learned model
-                if not self.use_gt_dynamics:
-                    raise NotImplementedError
-                new_state = self.env.reset()
-                cost += self.obs_cost_fn(new_state)
-                for a in range(self.plan_horizon):
-                    state = new_state
-                    action = actions[m, a]
-                    new_state, _, _, _ = self.predict_next_state(state, action)
-                    cost += self.obs_cost_fn(new_state)
-                q[cost] = m
-            # Caclulate mean and std using the elite action sequences
-            q = sorted(q.items(), key=lambda x: x[0])
-            q = q[:self.num_elites]
-            elite_actions = actions[[x[1] for x in q]]
-            # TODO: Verify your method.
-            mu = np.mean(elite_actions)
-            sigma = np.std(elite_actions)
-
+                for _ in range(self.num_particles):
+                    states = self.predict_next_state([state], actions[m, :])
+                    assert len(states) == self.plan_horizon + 1
+                    cost += sum(self.obs_cost_fn(x) for x in states)
+                cost /= self.num_particles
+                costs.append(cost)
+            # Calculate mean and std using the elite action sequences
+            indices = list(range(len(costs)))
+            indices = sorted(indices, key=lambda x: costs[x])
+            elite_sequences = indices[:self.num_elites]
+            elite_actions = actions[elite_sequences]
+            mu = np.mean(elite_actions, axis=0)
+            sigma = np.std(elite_actions, axis=0)
         return mu
 
     def train(self, obs_trajs, acs_trajs, rews_trajs, epochs=5):
@@ -141,22 +182,44 @@ class MPC:
           rews_trajs: rewards (NOTE: this may not be used)
           epochs: number of epochs to train for
         """
-        # TODO: write your code here
-        raise NotImplementedError
+        assert len(obs_trajs) == len(acs_trajs) + 1
+        inputs = np.concatenate((obs_trajs[:-1], acs_trajs), axis=1)
+        targets = obs_trajs[1:]
+        self.model.train(inputs, targets, epochs=epochs)
 
     def reset(self):
-        # TODO: write your code here
-        raise NotImplementedError
+        """Initializes variables mu and sigma.
+        """
+        self.mu = np.zeros(self.plan_horizon * self.action_dim)
+        self.reset_sigma()
 
     def act(self, state, t):
         """
-        Use model predictive control to find the action give current state.
+        Find the action for current state.
 
         Arguments:
           state: current state
           t: current timestep
         """
-        # TODO: write your code here
-        raise NotImplementedError
+        # Piazza #721, #734, #744
+        self.goal = state[-2:]
+        state = state[:-2]
+        if self.use_mpc:
+            mu = self.opt(state)
+            action = mu[:self.action_dim]  # Get the first action
+            action = action.copy()
+            mu[:-self.action_dim] = mu[self.action_dim:]
+            mu[-self.action_dim:] = 0
+            self.mu = mu
+        else:
+            if t % self.plan_horizon == 0:
+                self.mu = self.opt(state)
+            idx = (t % self.plan_horizon) * self.action_dim
+            action = self.mu[idx:idx + self.action_dim]
+        return action
 
-    # TODO: write any helper functions that you need
+    def reset_sigma(self):
+        """Resets/initializes the value of sigma.
+        """
+        cov = 0.5 * np.eye(self.plan_horizon * self.action_dim)
+        self.sigma = np.std(cov, axis=0)  # axis does not matter.
