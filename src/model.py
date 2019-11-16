@@ -37,8 +37,10 @@ class PENN:
                                       dtype=tf.float32)
         self.min_logvar = tf.Variable(-7 * np.ones([1, self.state_dim]),
                                       dtype=tf.float32)
+        # Define ops for model output and optimization
         self.outs = list()
         self.inputs = list()
+        self.losses = list()
         self.models = list()
         self.targets = list()
         self.optimizations = list()
@@ -55,8 +57,11 @@ class PENN:
             cov = tf.diag(var)
             norm_output = mean - model.output[:, :self.state_dim]
             # Calculate loss: Mahalanobis distance + log(det(cov))
-            loss = tf.reshape(norm_output, shape=(1, -1)) * cov * norm_output
-            loss += tf.linalg.det(cov)
+            # NOTE: Shape of norm_output should be (-1, self.state_dim)
+            loss = tf.math.multiply(tf.math.divide(norm_output, cov),
+                                    tf.transpose(norm_output))
+            loss += tf.math.log(tf.linalg.det(cov))
+            self.losses.append(loss)
             optimizer = Adam(lr=0.001)
             weights = model.trainable_weights
             gradients = tf.gradients(loss, weights)
@@ -65,10 +70,7 @@ class PENN:
         self.sess.run(tf.initialize_all_variables())
 
     def predict(self, state, action):
-        state = state.reshape(8)
-        action = action.reshape(2)
-        input = np.concatenate((state, action), axis=0)
-        input = input.reshape(1, -1)
+        input = np.concatenate((state, action), axis=1)
         feed_dict = {inp: input for inp in self.inputs}
         outputs = self.sess.run(self.outs, feed_dict=feed_dict)
         # TODO: use the output of all models
@@ -76,7 +78,6 @@ class PENN:
         mean, logvar = output
         sigma = np.sqrt(np.exp(logvar))
         state = np.random.normal(mean, sigma, size=mean.shape)
-        state = np.squeeze(state, axis=0)
         return state
 
     def get_output(self, output):
@@ -118,6 +119,7 @@ class PENN:
             targets: resulting states
         """
         # Sample indices with replacement for all models
+        # NOTE: Refer to Piazza #805, #804 for RMSE calculation details.
         size = len(inputs)
         indices = [self.get_indices(size) for _ in range(self.num_nets)]
         total_loss = list()
@@ -133,6 +135,7 @@ class PENN:
                 targs = [targets[indices[x][idx:idx + real_batch_size]]
                          for x in range(self.num_nets)]
                 feed_dict = {self.inputs: inps, self.targets: targs}
+                # TODO: Add a list for getting the losses
                 losses = self.sess.run(self.optimizations, feed_dict=feed_dict)
                 summed_loss = sum(losses)
                 print('Batch {}/{} | Loss: {:.3f}'.format(batch + 1,
