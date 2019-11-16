@@ -33,40 +33,60 @@ class PENN:
         K.set_session(self.sess)
 
         # Log variance bounds
-        self.max_logvar = tf.Variable(-3 * np.ones([1, self.state_dim]), dtype=tf.float32)
-        self.min_logvar = tf.Variable(-7 * np.ones([1, self.state_dim]), dtype=tf.float32)
-
-        # TODO write your code here
-        # Create and initialize your model
-        self.inputs = []
-        self.targets = []
-        self.optimizations = []
+        self.max_logvar = tf.Variable(-3 * np.ones([1, self.state_dim]),
+                                      dtype=tf.float32)
+        self.min_logvar = tf.Variable(-7 * np.ones([1, self.state_dim]),
+                                      dtype=tf.float32)
+        self.outs = list()
+        self.inputs = list()
+        self.models = list()
+        self.targets = list()
+        self.optimizations = list()
         for model in range(self.num_nets):
             model, inp = self.create_network()
             self.inputs.append(inp)
-            mean, logvar = self.get_output(model.output)
+            self.models.append(model)
+            output = self.get_output(model.output)
+            mean, logvar = output
+            self.outs.append(output)
             target = tf.placeholder(tf.float32, shape=(None, self.state_dim))
             self.targets.append(target)
             var = tf.math.exp(logvar)
+            cov = tf.diag(var)
             norm_output = mean - model.output[:, :self.state_dim]
-            loss = tf.reshape(norm_output, shape=(1, -1)) * var * norm_output
-            loss += tf.linalg.det(tf.diag(logvar))
+            # Calculate loss: Mahalanobis distance + log(det(cov))
+            loss = tf.reshape(norm_output, shape=(1, -1)) * cov * norm_output
+            loss += tf.linalg.det(cov)
             optimizer = Adam(lr=0.001)
             weights = model.trainable_weights
             gradients = tf.gradients(loss, weights)
             optimize = optimizer.apply_gradients(zip(gradients, weights))
-            # optimize = optimizer.minimize(loss, weights)
             self.optimizations.append(optimize)
+        self.sess.run(tf.initialize_all_variables())
+
+    def predict(self, state, action):
+        state = state.reshape(8)
+        action = action.reshape(2)
+        input = np.concatenate((state, action), axis=0)
+        input = input.reshape(1, -1)
+        feed_dict = {inp: input for inp in self.inputs}
+        outputs = self.sess.run(self.outs, feed_dict=feed_dict)
+        # TODO: use the output of all models
+        output = outputs[0]
+        mean, logvar = output
+        sigma = np.sqrt(np.exp(logvar))
+        state = np.random.normal(mean, sigma, size=mean.shape)
+        state = np.squeeze(state, axis=0)
+        return state
 
     def get_output(self, output):
         """
-        Argument:
+        Args:
             output: tf variable representing the output of the keras models,
             i.e., model.output
-        Return:
-          mean and log variance tf tensors
-        Note that you will still have to call sess.run on these tensors in
-        order to get the actual output.
+
+        Returns:
+            mean and log variance tf tensors
         """
         mean = output[:, :self.state_dim]
         raw_v = output[:, self.state_dim:]
@@ -87,24 +107,38 @@ class PENN:
         model = Model(inputs=inp, outputs=out)
         return model, inp
 
+    def get_indices(self, n):
+        return np.random.choice(range(n), size=n, replace=True)
+
     def train(self, inputs, targets, batch_size=128, epochs=5):
         """
-        Arguments:
+        Args:
             inputs: state and action inputs.  Assumes that inputs are
             standardized.
             targets: resulting states
         """
-        # Sample 1000 episodes/transitions from inputs for each network.
-        indices = [np.random.choice(range(len(inputs)),
-                                    size=len(inputs),
-                                    replace=True)
-                   for x in range(self.num_nets)]
+        # Sample indices with replacement for all models
+        size = len(inputs)
+        indices = [self.get_indices(size) for _ in range(self.num_nets)]
+        total_loss = list()
         for epoch in range(epochs):
-            num_batches = math.ceil(len(inputs) / batch_size)
+            print('Epoch {}/{}'.format(epoch + 1, epochs))
+            num_batches = math.ceil(size / batch_size)
             for batch in range(num_batches):
-                inps = [inputs[indices[x]] for x in range(self.num_nets)]
-                targs = [targets[indices[x]] for x in range(self.num_nets)]
-                losses = self.sess.run(self.optimizations,
-                                       feed_dict={self.inputs: inps,
-                                                  self.targets: targs})
-                rmse_losses = [np.sqrt(loss / batch_size) for loss in losses]
+                # Sample a batch and get inputs and targets
+                idx = batch * batch_size
+                real_batch_size = min(size - idx, batch_size)
+                inps = [inputs[indices[x][idx:idx + real_batch_size]]
+                        for x in range(self.num_nets)]
+                targs = [targets[indices[x][idx:idx + real_batch_size]]
+                         for x in range(self.num_nets)]
+                feed_dict = {self.inputs: inps, self.targets: targs}
+                losses = self.sess.run(self.optimizations, feed_dict=feed_dict)
+                summed_loss = sum(losses)
+                print('Batch {}/{} | Loss: {:.3f}'.format(batch + 1,
+                                                          num_batches,
+                                                          summed_loss),
+                      end='\r', flush=True)
+                total_loss.append(sum(losses))
+                # rmse_losses = [np.sqrt(loss / batch_size) for loss in losses]
+        np.save('losses.npy', total_loss)
