@@ -27,7 +27,6 @@ class Agent:
             if done:
                 # print(info['done'])
                 break
-
         # print("Rollout length: ", len(actions))
 
         return {
@@ -36,3 +35,14 @@ class Agent:
             "reward_sum": reward_sum,
             "rewards": np.array(rewards),
         }
+
+
+class RandomPolicy:
+    def __init__(self, action_dim):
+        self.action_dim = action_dim
+
+    def reset(self):
+        pass
+
+    def act(self, arg1, arg2):
+        return np.random.uniform(size=self.action_dim) * 2 - 1
