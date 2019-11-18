@@ -4,6 +4,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Flatten, Input, Concatenate, Lambda, Activation
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.losses import MSE
 import tensorflow.keras.backend as K
 import numpy as np
 from util import ZFilter
@@ -53,16 +54,15 @@ class PENN:
             self.outs.append(output)
             target = tf.placeholder(tf.float32, shape=(None, self.state_dim))
             self.targets.append(target)
-            var = tf.math.exp(logvar)
-            cov = tf.diag(var)
-            norm_output = mean - model.output[:, :self.state_dim]
+            var = tf.exp(logvar)
+            inv_var = tf.divide(1, var)
+            norm_output = mean - target
             # Calculate loss: Mahalanobis distance + log(det(cov))
-            # NOTE: Shape of norm_output should be (-1, self.state_dim)
-            loss = tf.math.multiply(tf.math.divide(norm_output, cov),
-                                    tf.transpose(norm_output))
-            loss += tf.math.log(tf.linalg.det(cov))
+            loss = tf.multiply(tf.multiply(norm_output, inv_var), norm_output)
+            loss = tf.reduce_sum(loss, axis=1)
+            loss += tf.math.log(tf.math.reduce_prod(var, axis=1))
             self.losses.append(loss)
-            optimizer = Adam(lr=0.001)
+            optimizer = Adam(lr=0.00001)
             weights = model.trainable_weights
             gradients = tf.gradients(loss, weights)
             optimize = optimizer.apply_gradients(zip(gradients, weights))
@@ -85,7 +85,6 @@ class PENN:
         Args:
             output: tf variable representing the output of the keras models,
             i.e., model.output
-
         Returns:
             mean and log variance tf tensors
         """
@@ -118,30 +117,41 @@ class PENN:
             standardized.
             targets: resulting states
         """
-        # Sample indices with replacement for all models
         # NOTE: Refer to Piazza #805, #804 for RMSE calculation details.
-        size = len(inputs)
-        indices = [self.get_indices(size) for _ in range(self.num_nets)]
+        rows = inputs.shape[0]
+        indices = [self.get_indices(rows) for _ in range(self.num_nets)]
         total_loss = list()
+        rmse_loss = list()
         for epoch in range(epochs):
             print('Epoch {}/{}'.format(epoch + 1, epochs))
-            num_batches = math.ceil(size / batch_size)
+            num_batches = math.ceil(rows / batch_size)
             for batch in range(num_batches):
                 # Sample a batch and get inputs and targets
                 idx = batch * batch_size
-                real_batch_size = min(size - idx, batch_size)
+                real_batch_size = min(rows - idx, batch_size)
                 inps = [inputs[indices[x][idx:idx + real_batch_size]]
                         for x in range(self.num_nets)]
                 targs = [targets[indices[x][idx:idx + real_batch_size]]
                          for x in range(self.num_nets)]
-                feed_dict = {self.inputs: inps, self.targets: targs}
-                # TODO: Add a list for getting the losses
-                losses = self.sess.run(self.optimizations, feed_dict=feed_dict)
-                summed_loss = sum(losses)
-                print('Batch {}/{} | Loss: {:.3f}'.format(batch + 1,
-                                                          num_batches,
-                                                          summed_loss),
-                      end='\r', flush=True)
-                total_loss.append(sum(losses))
-                # rmse_losses = [np.sqrt(loss / batch_size) for loss in losses]
-        np.save('losses.npy', total_loss)
+                feed_dict = {inp: input for inp, input in zip(self.inputs, inps)}
+                # RMSE
+                outputs = self.sess.run(self.outs, feed_dict=feed_dict)
+                # TODO: use output of all models
+                means, _ = outputs[0]
+                rmse = np.sqrt(np.square(targs[0] - means).mean(axis=1))
+                rmse = np.mean(rmse)
+                feed_dict_2 = {targ: target for targ, target in zip(self.targets, targs)}
+                feed_dict.update(feed_dict_2)
+                # Loss corresponding to all models
+                losses = self.sess.run(self.losses, feed_dict=feed_dict)
+                # TODO: use loss of all models
+                loss = np.mean(losses[0])
+                self.sess.run(self.optimizations, feed_dict=feed_dict)
+                # summed_loss = sum(losses)
+                print('Batch {}/{} | Loss: {:.3f} | RMSE: {:.3f}'.format(
+                    batch + 1, num_batches, loss, rmse), end='\r', flush=True)
+                total_loss.append(loss)
+                rmse_loss.append(rmse)
+            print('\n', '*'*40)
+            np.save('losses.npy', total_loss)
+            np.save('rmse.npy', rmse_loss)
