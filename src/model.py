@@ -1,13 +1,14 @@
 import math
-import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, Flatten, Input, Concatenate, Lambda, Activation
-from tensorflow.keras.regularizers import l2
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.losses import MSE
-import tensorflow.keras.backend as K
 import numpy as np
+import tensorflow as tf
+import tensorflow.keras.backend as K
+
 from util import ZFilter
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.layers import Dense, Input
+
 
 HIDDEN1_UNITS = 400
 HIDDEN2_UNITS = 400
@@ -128,13 +129,12 @@ class PENN:
             for batch in range(num_batches):
                 # Sample a batch and get inputs and targets
                 idx = batch * batch_size
-                real_batch_size = min(rows - idx, batch_size)
-                inps = [inputs[indices[x][idx:idx + real_batch_size]]
+                inps = [inputs[indices[x][idx:idx + batch_size]]
                         for x in range(self.num_nets)]
-                targs = [targets[indices[x][idx:idx + real_batch_size]]
+                targs = [targets[indices[x][idx:idx + batch_size]]
                          for x in range(self.num_nets)]
-                feed_dict = {inp: input for inp, input in zip(self.inputs, inps)}
                 # RMSE
+                feed_dict = {inp: input for inp, input in zip(self.inputs, inps)}
                 outputs = self.sess.run(self.outs, feed_dict=feed_dict)
                 # TODO: use output of all models
                 means, _ = outputs[0]
