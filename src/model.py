@@ -89,10 +89,10 @@ class PENN:
         assert input.shape[1] == (self.action_dim + self.state_dim)
         feed_dict = {inp: input for inp in self.inputs}
         outs = self.sess.run([self.means, self.logvars], feed_dict=feed_dict)
-        means = np.array(outs[0])  # 2, 1200, 8
-        logvars = np.array(outs[1])  # 2, 1200, 8
+        means = np.array(outs[0])
+        logvars = np.array(outs[1])
         assert means.shape[0] == self.num_nets == logvars.shape[0]
-        means = means[idxs, range(means.shape[1]), :]  # 1200, 8
+        means = means[idxs, range(means.shape[1]), :]
         logvars = logvars[idxs, range(logvars.shape[1]), :]
         sigma = np.sqrt(np.exp(logvars))
         next_states = np.random.normal(means, sigma, size=means.shape)
