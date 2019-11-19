@@ -12,29 +12,22 @@ from agent import Agent, RandomPolicy
 # Training params
 TASK_HORIZON = 40
 PLAN_HORIZON = 5
-
 # CEM params
 POPSIZE = 200
 NUM_ELITES = 20
 MAX_ITERS = 5
-
 # Model params
 LR = 1e-3
-
 # Dims
 STATE_DIM = 8
-
-LOG_DIR = './data'
 
 
 class ExperimentGTDynamics(object):
     def __init__(self, env_name='Pushing2D-v1', mpc_params=None):
         self.env = gym.make(env_name)
         self.task_horizon = TASK_HORIZON
-
         self.agent = Agent(self.env)
-        # Does not need model
-        self.warmup = False
+        self.warmup = False  # Does not need model
         mpc_params['use_gt_dynamics'] = True
         self.cem_policy = MPC(self.env, PLAN_HORIZON, None, POPSIZE,
                               NUM_ELITES, MAX_ITERS, **mpc_params,
@@ -65,7 +58,6 @@ class ExperimentModelDynamics:
     def __init__(self, env_name='Pushing2D-v1', num_nets=1, mpc_params=None):
         self.env = gym.make(env_name)
         self.task_horizon = TASK_HORIZON
-
         self.agent = Agent(self.env)
         mpc_params['use_gt_dynamics'] = False
         self.model = PENN(num_nets, STATE_DIM,
