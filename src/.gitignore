@@ -11,6 +11,8 @@ her/
 
 # Numpy files
 *.npy
+*.png
+*.jpg
 
 # PDF files
 *.pdf
