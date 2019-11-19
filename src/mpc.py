@@ -80,7 +80,9 @@ class MPC:
         d_goal = np.sqrt(np.dot(box_goal, box_goal))
         diff_coord = np.abs(box_x / box_y - goal_x / goal_y)
         # the -0.4 is to adjust for the radius of the box and pusher
-        return W_PUSHER * max(d_box - 0.4, 0) + W_GOAL * d_goal + W_DIFF * diff_coord
+        x = max(d_box - 0.4, 0)
+        cost = W_PUSHER * x + W_GOAL * d_goal + W_DIFF * diff_coord
+        return cost
 
     def predict_next_state_model(self, states, actions):
         """Given a list of state action pairs, use the learned model to
@@ -221,15 +223,12 @@ class MPC:
         input_states = [traj[:-1, :self.state_dim] for traj in obs_trajs]
         input_states = np.concatenate(input_states, axis=0)
         assert input_states.shape[1] == self.state_dim
-        # input_states = np.array(input_states).reshape(-1, self.state_dim)
         targets = [traj[1:, :self.state_dim] for traj in obs_trajs]
         targets = np.concatenate(targets, axis=0)
         assert targets.shape[1] == self.state_dim
-        # targets = np.array(targets).reshape(-1, self.state_dim)
         actions = [acs for acs in acs_trajs]
         actions = np.concatenate(actions, axis=0)
         assert actions.shape[1] == self.action_dim
-        # actions = np.array(actions).reshape(-1, self.action_dim)
         inputs = np.concatenate((input_states, actions), axis=1)
         assert inputs.shape[1] == (self.state_dim + self.action_dim)
         self.model.train(inputs, targets, epochs=epochs)
