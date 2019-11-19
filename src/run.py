@@ -124,8 +124,8 @@ class ExperimentModelDynamics:
         rewards_buffer = deque(maxlen=40 * 100)
         success_cem = list()
         success_random = list()
-        success_name_cem = 'success_pets_random.npy'
-        success_name_ran = 'success_pets_cem.npy'
+        success_name_cem = 'success_pets_cem.npy'
+        success_name_ran = 'success_pets_random.npy'
         for i in range(num_train_epochs):
             print("Starting training epoch %d." % (i + 1))
             # Collect data using the current dynamics model
