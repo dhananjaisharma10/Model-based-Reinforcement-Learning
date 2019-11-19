@@ -9,12 +9,10 @@ __pycache__/
 # Sub-directories
 her/
 
-# Numpy files
+# Util files
 *.npy
 *.png
 *.jpg
-
-# PDF files
 *.pdf
 
 # Tex files
