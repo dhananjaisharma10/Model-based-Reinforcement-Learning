@@ -67,7 +67,7 @@ class PENN:
             loss = tf.reduce_sum(loss, axis=1)
             loss += tf.math.log(tf.math.reduce_prod(var, axis=1))
             self.losses.append(loss)
-            optimizer = Adam(lr=0.0001)
+            optimizer = Adam(lr=0.00001)
             weights = model.trainable_weights
             gradients = tf.gradients(loss, weights)
             optimize = optimizer.apply_gradients(zip(gradients, weights))
