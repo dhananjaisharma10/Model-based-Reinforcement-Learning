@@ -1,9 +1,4 @@
-import os
-import tensorflow as tf
 import numpy as np
-import gym
-import copy
-from time import time
 
 
 class MPC:
@@ -85,19 +80,27 @@ class MPC:
         d_goal = np.sqrt(np.dot(box_goal, box_goal))
         diff_coord = np.abs(box_x / box_y - goal_x / goal_y)
         # the -0.4 is to adjust for the radius of the box and pusher
-        return W_PUSHER * np.max(d_box - 0.4, 0) + W_GOAL * d_goal + W_DIFF * diff_coord
+        return W_PUSHER * max(d_box - 0.4, 0) + W_GOAL * d_goal + W_DIFF * diff_coord
 
     def predict_next_state_model(self, states, actions):
         """Given a list of state action pairs, use the learned model to
         predict the next state.
+
+        Returns:
+            cost: cost of the given action sequence.
         """
-        # num_particles = states.shape[0]
+        # Initial cost is the same for all sequences
+        rows = actions.shape[0]  # M*P
+        cost = np.array([self.obs_cost_fn(states[0, :])] * rows)  # 1200, 5
+        sampler = self.ts1sampling(rows)
         for i in range(self.plan_horizon):
             idx = i * self.action_dim
-            action = actions[idx:idx + self.action_dim]
-            next_state = self.model.predict(states[i], action)
-            states.append(next_state)
-        return states
+            action = actions[:, idx:idx + self.action_dim]
+            idxs = sampler[:, i]  # 1200, 1
+            next_states = self.model.predict(states, action, idxs)
+            states = next_states
+            cost += np.apply_along_axis(self.obs_cost_fn, axis=1, arr=states)
+        return cost
 
     def predict_next_state_gt(self, states, actions):
         """Given a list of state action pairs, use the ground truth dynamics
@@ -115,37 +118,55 @@ class MPC:
         for a certain initial state.
         Piazza #699
         """
-        best_cost = np.inf
-        best_action_sequence = np.zeros_like(self.mu)
+        # best_cost = np.inf
+        # best_action_sequence = np.zeros_like(self.mu)
         # Generate M*I action sequences of length T according to N(0, 0.5I)
         total_sequences = self.popsize * self.max_iters
         shape = (total_sequences, self.plan_horizon * self.action_dim)
         self.reset()  # resets mu and sigma
         actions = np.random.normal(self.mu, self.sigma, size=shape)
-        for i in range(total_sequences):
-            cost = 0
-            for _ in range(self.num_particles):
-                start = time()
-                if not self.use_gt_dynamics:
-                    states = np.tile(state, reps=(self.num_particles, 1))
-                    states = self.predict_next_state(states, actions[i, :])
-                else:
-                    states = self.predict_next_state([state], actions[i, :])
-                print('Time taken for a particle: {:.3f}'.format(time() - start))
-                assert len(states) == self.plan_horizon + 1
-                cost += sum(self.obs_cost_fn(x) for x in states)
-            cost /= self.num_particles
-            if cost < best_cost:
-                best_cost = cost
-                best_action_sequence = actions[i, :]
-        return best_action_sequence
+        actions = np.clip(actions, a_min=-1, a_max=1)
+        repeated_actions = np.tile(actions, reps=(self.num_particles, 1))
+        rows = repeated_actions.shape[0]
+        states = np.tile(state, reps=(rows, 1))
+        costs = None
+        if not self.use_gt_dynamics:
+            costs = self.predict_next_state(states, repeated_actions)
+        costs = costs.reshape(self.num_particles, -1)
+        costs = np.mean(costs, axis=0)  # these are M*I costs
+        assert costs.shape[0] == self.popsize * self.max_iters
+        min_cost_idx = np.argmin(costs)
+        return actions[min_cost_idx]
+        # for i in range(total_sequences):
+        #     cost = 0
+        #     # start = time()
+        #     if not self.use_gt_dynamics:
+        #         states = np.tile(state, reps=(self.num_particles, 1))
+        #         cost = self.predict_next_state(states, actions[i, :])
+        #     # print('Time taken for a particle: {:.3f}'.format(time() - start))
+        #     # for _ in range(self.num_particles):
+        #     #     if not self.use_gt_dynamics:
+        #     #         states = np.tile(state, reps=(self.num_particles, 1))
+        #     #         cost = self.predict_next_state(states, actions[i, :])
+        #     #     else:
+        #     #         states = self.predict_next_state([state], actions[i, :])
+        #     #     assert len(states) == self.plan_horizon + 1
+        #     #     cost += sum(self.obs_cost_fn(x) for x in states)
+        #     # cost /= self.num_particles
+        #     if cost < best_cost:
+        #         best_cost = cost
+        #         best_action_sequence = actions[i, :]
+        # return best_action_sequence
+
+    def ts1sampling(self, n):
+        s = (n, self.plan_horizon)
+        return np.random.choice(range(self.num_nets), size=s, replace=True)
 
     def cem_optimizer(self, state):
         """Implements the Cross Entropy Method optimizer. It gives the action
         sequence for a certain initial state by choosing elite sequences and
         using their mean.
         """
-        state = state[:self.state_dim]
         mu = self.mu
         sigma = self.sigma
         for i in range(self.max_iters):
@@ -153,20 +174,34 @@ class MPC:
             shape = (self.popsize, self.plan_horizon * self.action_dim)
             actions = np.random.normal(mu, sigma, size=shape)
             actions = np.clip(actions, a_min=-1, a_max=1)
-            costs = list()
-            for m in range(self.popsize):
-                cost = 0
-                for _ in range(self.num_particles):
-                    states = self.predict_next_state([state], actions[m, :])
-                    assert len(states) == self.plan_horizon + 1
-                    cost += sum(self.obs_cost_fn(x) for x in states)
-                cost /= self.num_particles
-                costs.append(cost)
-            # Calculate mean and std using the elite action sequences
-            indices = list(range(len(costs)))
-            indices = sorted(indices, key=lambda x: costs[x])
-            elite_sequences = indices[:self.num_elites]
-            elite_actions = actions[elite_sequences]
+            repeated_actions = np.tile(actions, reps=(self.num_particles, 1))
+            rows = repeated_actions.shape[0]
+            states = np.tile(state, reps=(rows, 1))
+            costs = None
+            if not self.use_gt_dynamics:
+                costs = self.predict_next_state(states, repeated_actions)
+            # Average the entries after every total_sequences items
+            costs = costs.reshape(self.num_particles, -1)
+            costs = np.mean(costs, axis=0)  # these are M costs
+            costs = np.argsort(costs)
+            elite_sequences = costs[:self.num_elites]
+            # for m in range(self.popsize):
+            #     cost = 0
+            #     if not self.use_gt_dynamics:
+            #         states = np.tile(state, reps=(self.num_particles, 1))
+            #         cost = self.predict_next_state(states, actions[i, :])
+            #     # for _ in range(self.num_particles):
+            #     #     states = self.predict_next_state([state], actions[m, :])
+            #     #     assert len(states) == self.plan_horizon + 1
+            #     #     cost += sum(self.obs_cost_fn(x) for x in states)
+            #     # cost /= self.num_particles
+            #     costs.append(cost)
+            # # Calculate mean and std using the elite action sequences
+            # indices = list(range(len(costs)))
+            # indices = sorted(indices, key=lambda x: costs[x])
+            # elite_sequences = indices[:self.num_elites]
+            elite_actions = actions[elite_sequences, :]
+            assert elite_actions.shape[0] == self.num_elites
             mu = np.mean(elite_actions, axis=0)
             sigma = np.std(elite_actions, axis=0)
         return mu
@@ -182,9 +217,21 @@ class MPC:
           rews_trajs: rewards (NOTE: this may not be used)
           epochs: number of epochs to train for
         """
-        assert len(obs_trajs) == len(acs_trajs) + 1
-        inputs = np.concatenate((obs_trajs[:-1], acs_trajs), axis=1)
-        targets = obs_trajs[1:]
+        assert len(obs_trajs) == len(acs_trajs)
+        input_states = [traj[:-1, :self.state_dim] for traj in obs_trajs]
+        input_states = np.concatenate(input_states, axis=0)
+        assert input_states.shape[1] == self.state_dim
+        # input_states = np.array(input_states).reshape(-1, self.state_dim)
+        targets = [traj[1:, :self.state_dim] for traj in obs_trajs]
+        targets = np.concatenate(targets, axis=0)
+        assert targets.shape[1] == self.state_dim
+        # targets = np.array(targets).reshape(-1, self.state_dim)
+        actions = [acs for acs in acs_trajs]
+        actions = np.concatenate(actions, axis=0)
+        assert actions.shape[1] == self.action_dim
+        # actions = np.array(actions).reshape(-1, self.action_dim)
+        inputs = np.concatenate((input_states, actions), axis=1)
+        assert inputs.shape[1] == (self.state_dim + self.action_dim)
         self.model.train(inputs, targets, epochs=epochs)
 
     def reset(self):
@@ -201,9 +248,9 @@ class MPC:
           state: current state
           t: current timestep
         """
-        # Piazza #721, #734, #744
-        self.goal = state[-2:]
-        state = state[:-2]
+        self.goal = state[self.state_dim:]
+        assert len(self.goal) == 2
+        state = state[:self.state_dim]
         if self.use_mpc:
             mu = self.opt(state)
             action = mu[:self.action_dim]  # Get the first action
@@ -221,5 +268,5 @@ class MPC:
     def reset_sigma(self):
         """Resets/initializes the value of sigma.
         """
-        cov = 0.5 * np.eye(self.plan_horizon * self.action_dim)
-        self.sigma = np.std(cov, axis=0)  # axis does not matter.
+        sigma = [0.5 ** 0.5] * (self.plan_horizon * self.action_dim)
+        self.sigma = np.array(sigma)
