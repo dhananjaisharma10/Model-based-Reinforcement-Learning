@@ -3,7 +3,6 @@ import gym
 import envs
 import numpy as np
 import tensorflow as tf
-import matplotlib.pyplot as plt
 
 from collections import deque
 from mpc import MPC
@@ -69,15 +68,19 @@ class ExperimentModelDynamics:
 
         self.agent = Agent(self.env)
         mpc_params['use_gt_dynamics'] = False
-        self.model = PENN(num_nets, STATE_DIM, len(self.env.action_space.sample()), LR)
-        self.cem_policy = MPC(self.env, PLAN_HORIZON, self.model, POPSIZE, NUM_ELITES, MAX_ITERS, **mpc_params,
+        self.model = PENN(num_nets, STATE_DIM,
+                          len(self.env.action_space.sample()), LR)
+        self.cem_policy = MPC(self.env, PLAN_HORIZON, self.model, POPSIZE,
+                              NUM_ELITES, MAX_ITERS, **mpc_params,
                               use_random_optimizer=False)
-        self.random_policy = MPC(self.env, PLAN_HORIZON, self.model, POPSIZE, NUM_ELITES, MAX_ITERS, **mpc_params,
+        self.random_policy = MPC(self.env, PLAN_HORIZON, self.model, POPSIZE,
+                                 NUM_ELITES, MAX_ITERS, **mpc_params,
                                  use_random_optimizer=True)
-        self.random_policy_no_mpc = RandomPolicy(len(self.env.action_space.sample()))
+        self.random_policy_no_mpc = RandomPolicy(
+            len(self.env.action_space.sample()))
 
     def test(self, num_episodes, optimizer='cem'):
-        samples = []
+        samples = list()
         for j in range(num_episodes):
             print('Test episode {}'.format(j))
             samples.append(
@@ -93,11 +96,10 @@ class ExperimentModelDynamics:
     def model_warmup(self, num_episodes, num_epochs):
         """Train a single probabilistic model using a random policy
         """
-        # samples = list()
-        # for i in range(num_episodes):
-        #     samples.append(self.agent.sample(
-        #         self.task_horizon, self.random_policy_no_mpc))
-        samples = np.load('samples.npy', allow_pickle=True)
+        samples = list()
+        for i in range(num_episodes):
+            samples.append(self.agent.sample(
+                self.task_horizon, self.random_policy_no_mpc))
         print('')
         print('*'*20, 'TRAINING', '*'*20)
         self.cem_policy.train(
@@ -205,8 +207,7 @@ def train_single_dynamics(num_test_episode=50):
     print('*'*20, 'WARMUP', '*'*20)
     print('')
     exp.model_warmup(num_episodes=num_episodes, num_epochs=num_epochs)
-    print('*'*20, 'TEST', '*'*20)
-    avg_reward, avg_success = exp.test(num_test_episode, optimizer='random')
+    avg_reward, avg_success = exp.test(num_test_episode, optimizer='cem')
     print('MPC PushingEnv: avg_reward: {}, avg_success: {}'.format(
         avg_reward, avg_success))
 
@@ -218,7 +219,8 @@ def train_pets():
     num_episodes_per_epoch = 1
 
     mpc_params = {'use_mpc': True, 'num_particles': 6}
-    exp = ExperimentModelDynamics(env_name='Pushing2D-v1', num_nets=num_nets, mpc_params=mpc_params)
+    exp = ExperimentModelDynamics(env_name='Pushing2D-v1', num_nets=num_nets,
+                                  mpc_params=mpc_params)
     print('*'*20, 'WARMUP', '*'*20)
     exp.model_warmup(num_episodes=100, num_epochs=10)
     exp.train(num_train_epochs=num_epochs,
@@ -232,5 +234,5 @@ if __name__ == "__main__":
     tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
     # test_cem_gt_dynamics(50)
-    # train_single_dynamics(50)
-    train_pets()
+    train_single_dynamics(50)
+    # train_pets()
