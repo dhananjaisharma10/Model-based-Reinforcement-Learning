@@ -8,14 +8,13 @@ __pycache__/
 .AppleDouble
 .LSOverride
 
-# Sub-directories
-template/
-writeup/
-
 # Other files
 *.pdf
 *.tex
 *.log
+*.npy
+*.png
+*.jpg
 
 # VSCODE files
 .vscode/
@@ -24,3 +23,8 @@ writeup/
 /*.project
 /*.pydevproject
 /.settings
+
+# Sub-directories
+template/
+writeup/
+src/
