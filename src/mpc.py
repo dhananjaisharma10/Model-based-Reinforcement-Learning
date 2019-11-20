@@ -92,6 +92,7 @@ class MPC:
             cost: cost of the given action sequence.
         """
         # Initial cost is the same for all sequences
+        # TODO: Remove cost calculation from this function
         rows = actions.shape[0]  # M*P
         cost = np.array([self.obs_cost_fn(states[0, :])] * rows)
         sampler = self.ts1sampling(rows)
