@@ -98,7 +98,7 @@ class MPC:
         for i in range(self.plan_horizon):
             idx = i * self.action_dim
             action = actions[:, idx:idx + self.action_dim]
-            idxs = sampler[:, i]  # 1200, 1
+            idxs = sampler[:, i]
             next_states = self.model.predict(states, action, idxs)
             states = next_states
             cost += np.apply_along_axis(self.obs_cost_fn, axis=1, arr=states)
@@ -118,47 +118,35 @@ class MPC:
     def random_optimizer(self, state):
         """Implements the random optimizer. It gives the best action sequence
         for a certain initial state.
-        Piazza #699
         """
-        # best_cost = np.inf
-        # best_action_sequence = np.zeros_like(self.mu)
         # Generate M*I action sequences of length T according to N(0, 0.5I)
         total_sequences = self.popsize * self.max_iters
         shape = (total_sequences, self.plan_horizon * self.action_dim)
         self.reset()  # resets mu and sigma
         actions = np.random.normal(self.mu, self.sigma, size=shape)
         actions = np.clip(actions, a_min=-1, a_max=1)
-        repeated_actions = np.tile(actions, reps=(self.num_particles, 1))
-        rows = repeated_actions.shape[0]
-        states = np.tile(state, reps=(rows, 1))
-        costs = None
         if not self.use_gt_dynamics:
-            costs = self.predict_next_state(states, repeated_actions)
-        costs = costs.reshape(self.num_particles, -1)
-        costs = np.mean(costs, axis=0)  # these are M*I costs
-        assert costs.shape[0] == self.popsize * self.max_iters
-        min_cost_idx = np.argmin(costs)
-        return actions[min_cost_idx]
-        # for i in range(total_sequences):
-        #     cost = 0
-        #     # start = time()
-        #     if not self.use_gt_dynamics:
-        #         states = np.tile(state, reps=(self.num_particles, 1))
-        #         cost = self.predict_next_state(states, actions[i, :])
-        #     # print('Time taken for a particle: {:.3f}'.format(time() - start))
-        #     # for _ in range(self.num_particles):
-        #     #     if not self.use_gt_dynamics:
-        #     #         states = np.tile(state, reps=(self.num_particles, 1))
-        #     #         cost = self.predict_next_state(states, actions[i, :])
-        #     #     else:
-        #     #         states = self.predict_next_state([state], actions[i, :])
-        #     #     assert len(states) == self.plan_horizon + 1
-        #     #     cost += sum(self.obs_cost_fn(x) for x in states)
-        #     # cost /= self.num_particles
-        #     if cost < best_cost:
-        #         best_cost = cost
-        #         best_action_sequence = actions[i, :]
-        # return best_action_sequence
+            repeated_actions = np.tile(actions, reps=(self.num_particles, 1))
+            rows = repeated_actions.shape[0]
+            states = np.tile(state, reps=(rows, 1))
+            costs = self.predict_next_state_model(states, repeated_actions)
+            costs = costs.reshape(self.num_particles, -1)
+            costs = np.mean(costs, axis=0)  # these are M*I costs
+            assert costs.shape[0] == self.popsize * self.max_iters
+            min_cost_idx = np.argmin(costs)
+            return actions[min_cost_idx]
+        else:
+            best_cost = np.inf
+            best_action_sequence = np.zeros_like(self.mu)
+            for i in range(total_sequences):
+                states = self.predict_next_state_gt([state], actions[i, :])
+                assert len(states) == self.plan_horizon + 1
+                cost = sum(self.obs_cost_fn(x) for x in states)
+                cost /= self.num_particles
+                if cost < best_cost:
+                    best_cost = cost
+                    best_action_sequence = actions[i, :]
+            return best_action_sequence
 
     def ts1sampling(self, n):
         s = (n, self.plan_horizon)
@@ -176,32 +164,27 @@ class MPC:
             shape = (self.popsize, self.plan_horizon * self.action_dim)
             actions = np.random.normal(mu, sigma, size=shape)
             actions = np.clip(actions, a_min=-1, a_max=1)
-            repeated_actions = np.tile(actions, reps=(self.num_particles, 1))
-            rows = repeated_actions.shape[0]
-            states = np.tile(state, reps=(rows, 1))
             costs = None
             if not self.use_gt_dynamics:
-                costs = self.predict_next_state(states, repeated_actions)
-            # Average the entries after every total_sequences items
-            costs = costs.reshape(self.num_particles, -1)
-            costs = np.mean(costs, axis=0)  # these are M costs
+                reps = (self.num_particles, 1)
+                repeated_actions = np.tile(actions, reps=reps)
+                rows = repeated_actions.shape[0]
+                states = np.tile(state, reps=(rows, 1))
+                costs = self.predict_next_state_model(states, repeated_actions)
+                # Average the entries after every total_sequences items
+                costs = costs.reshape(self.num_particles, -1)
+                costs = np.mean(costs, axis=0)  # these are M costs
+            else:
+                costs = list()
+                for m in range(self.popsize):
+                    states = self.predict_next_state_gt([state], actions[m, :])
+                    assert len(states) == self.plan_horizon + 1
+                    cost = sum(self.obs_cost_fn(x) for x in states)
+                    cost /= self.num_particles
+                    costs.append(cost)
+            # Calculate mean and std using the elite action sequences
             costs = np.argsort(costs)
             elite_sequences = costs[:self.num_elites]
-            # for m in range(self.popsize):
-            #     cost = 0
-            #     if not self.use_gt_dynamics:
-            #         states = np.tile(state, reps=(self.num_particles, 1))
-            #         cost = self.predict_next_state(states, actions[i, :])
-            #     # for _ in range(self.num_particles):
-            #     #     states = self.predict_next_state([state], actions[m, :])
-            #     #     assert len(states) == self.plan_horizon + 1
-            #     #     cost += sum(self.obs_cost_fn(x) for x in states)
-            #     # cost /= self.num_particles
-            #     costs.append(cost)
-            # # Calculate mean and std using the elite action sequences
-            # indices = list(range(len(costs)))
-            # indices = sorted(indices, key=lambda x: costs[x])
-            # elite_sequences = indices[:self.num_elites]
             elite_actions = actions[elite_sequences, :]
             assert elite_actions.shape[0] == self.num_elites
             mu = np.mean(elite_actions, axis=0)
