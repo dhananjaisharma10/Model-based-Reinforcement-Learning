@@ -1,13 +1,14 @@
-import Box2D
-from Box2D.b2 import (circleShape, fixtureDef, polygonShape)
-# from opencv_draw import OpencvDrawFuncs
-# import cv2
-
+import cv2
 import gym
+import copy
+import Box2D
+import numpy as np
+
+from Box2D.b2 import (circleShape, fixtureDef, polygonShape)
+from opencv_draw import OpencvDrawFuncs
+
 from gym import spaces
 from gym.utils import seeding
-import numpy as np
-import copy
 
 MIN_COORD = 0
 MAX_COORD = 5
@@ -34,8 +35,8 @@ class Pusher2d(gym.Env):
         # State: pusher xy position, box xy position, pusher xy velocity, box xy velocity, goal xy position
         self.observation_space = spaces.Box(np.ones(10) * MIN_COORD, np.ones(10) * MAX_COORD, dtype=np.float32)
         self.reset()
-        # self.drawer = OpencvDrawFuncs(w=240, h=180, ppm=40)
-        # self.drawer.install()
+        self.drawer = OpencvDrawFuncs(w=240, h=180, ppm=40)
+        self.drawer.install()
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -76,9 +77,9 @@ class Pusher2d(gym.Env):
 
     def step(self, action, render=False):
         """ standard Gym method; returns s, r, d, i """
-        # if render:
-        #     self.drawer.clear_screen()
-        #     self.drawer.draw_world(self.world)
+        if render:
+            self.drawer.clear_screen()
+            self.drawer.draw_world(self.world)
 
         action = np.clip(action, -1, 1).astype(np.float32)
         if self.control_noise > 0.:
@@ -89,9 +90,9 @@ class Pusher2d(gym.Env):
         self.box._b2Body__SetActive(True)
         self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
 
-        # if render:
-        #     cv2.imshow("world", self.drawer.screen)
-        #     cv2.waitKey(20)
+        if render:
+            cv2.imshow("world", self.drawer.screen)
+            cv2.waitKey(20)
         done = False
         reward = -1
         obj_coords = np.concatenate([self.pusher.position.tuple, self.box.position.tuple])
