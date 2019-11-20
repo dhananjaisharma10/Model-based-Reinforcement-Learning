@@ -93,7 +93,7 @@ class MPC:
         """
         # Initial cost is the same for all sequences
         rows = actions.shape[0]  # M*P
-        cost = np.array([self.obs_cost_fn(states[0, :])] * rows)  # 1200, 5
+        cost = np.array([self.obs_cost_fn(states[0, :])] * rows)
         sampler = self.ts1sampling(rows)
         for i in range(self.plan_horizon):
             idx = i * self.action_dim
