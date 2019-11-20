@@ -32,6 +32,7 @@ class PENN:
         self.num_nets = num_nets
         self.state_dim = state_dim
         self.action_dim = action_dim
+        self.learning_rate = learning_rate
         K.set_session(self.sess)
 
         # Log variance bounds
@@ -67,7 +68,7 @@ class PENN:
             loss = tf.reduce_sum(loss, axis=1)
             loss += tf.math.log(tf.math.reduce_prod(var, axis=1))
             self.losses.append(loss)
-            optimizer = Adam(lr=0.00001)
+            optimizer = Adam(lr=learning_rate)
             weights = model.trainable_weights
             gradients = tf.gradients(loss, weights)
             optimize = optimizer.apply_gradients(zip(gradients, weights))
