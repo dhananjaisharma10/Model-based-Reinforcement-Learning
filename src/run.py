@@ -246,6 +246,6 @@ if __name__ == "__main__":
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
     tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
-    # test_cem_gt_dynamics(50)
+    test_cem_gt_dynamics(50)
     train_single_dynamics(50)
-    # train_pets()
+    train_pets()
