@@ -171,7 +171,6 @@ class MPC:
                 rows = repeated_actions.shape[0]
                 states = np.tile(state, reps=(rows, 1))
                 costs = self.predict_next_state_model(states, repeated_actions)
-                # Average the entries after every total_sequences items
                 costs = costs.reshape(self.num_particles, -1)
                 costs = np.mean(costs, axis=0)  # these are M costs
             else:
